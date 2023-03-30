@@ -1,6 +1,9 @@
 # SMART: a Spoken Media Automatic Reconstruction Tool
-- Project for 2023-Spring Human-Computer Interaction(김상욱 교수님)
-- 한양대학교 컴퓨터소프트웨어학부 이성진
+#### Project for 2023-Spring Human-Computer Interaction
+#### 한양대학교 컴퓨터소프트웨어학부 이성진
+
+
+![SMART_demo](https://user-images.githubusercontent.com/44901828/228782885-5451f802-dcb4-4df3-b380-4e07a628853c.gif)
 
 ## 배경
 - 인간이 일상 속에서 다른 이들과 정보를 공유하기 위해 가장 많이 사용하는 수단은 바로 대화입니다. 대화는 가장 자연스러운 의사소통 수단이면서, 매우 쉽게 자신만의 언어로 정보를 전달할 수 있지만, 중요하고 복잡한 내용이나 매우 많은 양의 정보를 다룰 때에는 여러 가지 문제점이 존재합니다.
@@ -18,7 +21,6 @@
 - 이를 바탕으로, 현재 진행중인 발화를 듣는 청자들이 이해하는데 도움이 되고, 외국어 발화를 듣는 중이거나 중간 흐름을 놓친 경우에도 쉽게 따라갈 수 있습니다.
 
 ## 동작 방식
-![SMART_demo](https://user-images.githubusercontent.com/44901828/228782885-5451f802-dcb4-4df3-b380-4e07a628853c.gif)
 - 실시간으로 녹음된 발화를 텍스트로 저장하기 위해 OpenAI에서 공개한 Whisper Large 모델을 사용합니다. Whisper는 open-source STT 모델로, 다양한 언어를 인식하여 transcribing을 진행하고 이를 다른 언어로 번역할 수 있는 기능을 갖추고 있습니다.
 - Real-time speech recognition 방식은 https://github.com/davabase/whisper_real_time 레포지토리를 기반으로 개발을 진행했으며, 모델 인퍼런스 부분을 별도의 API 서버로 작동하도록 서빙하여 여러 인스턴스에서 실행 가능하도록 할 예정입니다.
 - 번역을 위해 Papago API를, 요약 기능을 위해 summarization task에 튜닝된 모델을 자체적으로 서빙하여 사용했습니다.
