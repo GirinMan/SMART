@@ -4,17 +4,18 @@ import argparse
 import io
 import speech_recognition as sr
 import streamlit as st
-import json
-import requests
+import os
 
 from datetime import datetime, timedelta
 from queue import Queue
 from tempfile import NamedTemporaryFile
 from time import sleep
 from sys import platform
+from api.translation_api import get_translation
 from api.papago_api import get_papago_detection, get_papago_trans
 from api.whisper_api import get_transcription
 from api.summary_api import get_summarization
+from api.title_api import get_title
 
 st.set_page_config(layout="wide")
 st.title("S.M.A.R.T. DEMO")
@@ -38,7 +39,9 @@ parser.add_argument("--phrase_timeout", default=2,
 if 'linux' in platform:
     parser.add_argument("--default_microphone", default='pulse',
                         help="Default microphone name for SpeechRecognition. "
-                                "Run this with 'list' to view available Microphones.", type=str)
+                            "Run this with 'list' to view available Microphones.", type=str)
+parser.add_argument("--translator", default='custom',
+                    help="Default translator for english to korean translation. Use papago or custom", type=str)
 args = parser.parse_args()
 
 # The last time a recording was retreived from the queue.
@@ -66,6 +69,7 @@ if 'linux' in platform:
     else:
         for index, name in enumerate(sr.Microphone.list_microphone_names()):
             if mic_name in name:
+                print(f"Microphone with name \"{name}\" found")   
                 source = sr.Microphone(sample_rate=16000, device_index=index)
                 break
 else:
@@ -74,12 +78,20 @@ else:
 record_timeout = args.record_timeout
 phrase_timeout = args.phrase_timeout
 
+if args.translator == "custom":
+    translate = get_translation
+elif args.translator == "papago":
+    translate = lambda x: get_papago_trans(x)['translatedText']
+else:
+    translate = lambda x: x
+
 temp_file = NamedTemporaryFile().name
 transcription_file = "./trans.txt"
 transcription = []
 summary = []
+title = []
 target_lang = 'ko'
-block_size = 400
+block_size = 600
 sentence_size = 100
 
 with source:
@@ -98,24 +110,42 @@ def record_callback(_, audio:sr.AudioData) -> None:
 # We could do this manually but SpeechRecognizer provides a nice helper.
 recorder.listen_in_background(source, record_callback, phrase_time_limit=record_timeout)
 
+def show_contents(col1, col2):
+    for i, (line, summ, _title) in enumerate(zip(transcription, summary, title)):
+        st.markdown("---------")
+        split_title = _title.split("###")
+        if len(split_title) > 1:
+            st.markdown(f"#### Section {i} | {split_title[1]}")
+            st.markdown(f'##### {split_title[0]}')
+        else:
+            st.markdown(f"#### Section {i} | {split_title[0]}")
+        col1, col2 =st.columns([1, 1])
+        col1.markdown('- **Transcription:** ' + line)
+        col2.markdown(summ)
+
+
 # Cue the user that we're ready to go.
 col1, col2 = st.columns([1, 1])
+col1.markdown(f"### Original transcription")
+col2.markdown(f"### Summarization")
+
 if col1.button("START", type='primary'):
     stop_button = col2.button("STOP", type='primary')
     col1, col2 = st.columns([1, 1])
-    col1.markdown(f"### Original transcription")
-    col2.markdown(f"### Summarization")
 
     contents = st.empty()
 
 
     while True:
         with contents.container():
-            if stop_button:
-                break
             now = datetime.utcnow()
             # Pull raw recorded audio from the queue.
             if not data_queue.empty():
+                # Concatenate our current audio data with the latest audio data.
+                while not data_queue.empty():
+                    data = data_queue.get()
+                    last_sample += data
+
                 phrase_complete = False
                 # If enough time has passed between recordings, consider the phrase complete.
                 # Clear the current working audio buffer to start over with the new data.
@@ -125,11 +155,6 @@ if col1.button("START", type='primary'):
                     phrase_complete = True
                 # This is the last time we received new audio data from the queue.
                 phrase_time = now
-
-                # Concatenate our current audio data with the latest audio data.
-                while not data_queue.empty():
-                    data = data_queue.get()
-                    last_sample += data
 
                 # If we detected a pause between recordings, add a new item to our transcripion.
                 # Otherwise edit the existing one.
@@ -151,37 +176,66 @@ if col1.button("START", type='primary'):
                             transcription[-1] = transcription[-1] + ' ' + text
                         else:
                             summarization = get_summarization(transcription[-1])
-                            source_detected = get_papago_detection(summarization)["langCode"]
-                            trans_summarization = get_papago_trans(summarization, source_detected, 'ko')['translatedText'].strip()
+                            trans_summarization = translate(summarization).strip()
                             summary[-1] = '- **English:** ' + summarization + '\n- **한국어:** ' + trans_summarization
+                            title[-1] = get_title(transcription[-1])
+                            title[-1] += "###" + translate(title[-1])
                             transcription.append(text)
                             summary.append("")
+                            title.append("")
                     else:
                         transcription.append(text)
-                        #summarization = get_summarization(transcription[-1])
                         summary.append("")
+                        title.append("")
 
 
             elif len(summary) > 0:
-                if summary[-1] == "" and len(transcription[-1]) > block_size / 2:
+                if summary[-1] == "" and len(transcription[-1]) > 100:
                     summarization = get_summarization(transcription[-1])
-                    source_detected = get_papago_detection(summarization)["langCode"]
-                    trans_summarization = get_papago_trans(summarization, source_detected, 'ko')['translatedText'].strip()
+                    trans_summarization = translate(summarization).strip()
                     summary[-1] = '- **English:** ' + summarization + '\n- **한국어:** ' + trans_summarization
+                    title[-1] = get_title(transcription[-1])
+                    title[-1] += "###" + translate(title[-1])
 
-            for i, (line, summ) in enumerate(zip(transcription, summary)):
-                st.markdown("---------")
-                st.markdown(f"#### Section {i}")
-                col1, col2 =st.columns([1, 1])
-                col1.markdown('- **Transcription:** ' + line)
-                col2.markdown(summ)
-            
+            show_contents(col1, col2)
+
+            with open("cache/transcription.txt", "w") as file:
+                file.writelines([_txt + '\n' for _txt in transcription] + ["<end>"])
+            with open("cache/summary.txt", "w") as file:
+                tmp_summary = []
+                for summ in summary:
+                    tmp_summary.append(summ.replace('\n', ' '))
+                file.writelines([_txt + '\n' for _txt in tmp_summary] + ["<end>"])
+            with open("cache/title.txt", "w") as file:
+                file.writelines([_txt + '\n' for _txt in title] + ["<end>"])
+
+            if stop_button:
+                break
         # Infinite loops are bad for processors, must sleep.
         sleep(0.1)
 
-    for i, (line, summ) in enumerate(zip(transcription, summary)):
-        st.markdown("---------")
-        st.markdown(f"#### Section {i}")
-        col1, col2 =st.columns([1, 1])
-        col1.markdown('- **Transcription:** ' + line)
-        col2.markdown(summ)
+    show_contents(col1, col2)
+try:
+    os.makedirs("./cache", exist_ok=True)
+    with open("cache/transcription.txt", "r") as file:
+        transcription = file.readlines()
+    with open("cache/summary.txt", "r") as file:
+        summary = file.readlines()
+        summary = [summ.replace("- **한", "\n- **한") for summ in summary]
+    with open("cache/title.txt", "r") as file:
+        title = file.readlines()
+
+    last_index = -1
+    for i, txt in enumerate(transcription):
+        if "<end>" in txt:
+            last_index = i
+            break
+
+    transcription = transcription[:last_index]
+    summary = summary[:last_index]
+    title = title[:last_index]
+except:
+    transcription = ["Empty document"]
+    summary = ["- **English:** \n - **한국어:**"]
+    title = ["Sample Title###여기에 제목 표시"]
+show_contents(col1, col2)
